@@ -2,24 +2,32 @@
 args <- commandArgs(TRUE)
 INPUTDir<- args[1]	
 OutDir <- args[2]	
+bin_size <- as.numeric(args[3])
+#library
+print("-------------load library")
+library(QDNAseq)
+library(BiocGenerics)
+library(Rsamtools)
+library(Biobase)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(QDNAseq.hg19)
+library(DNAcopy)
+library(CGHregions)     
 
-
-
+chrs <- c(1:22,"X","Y")
+bins <- getBinAnnotations(binSize=bin_size)
+print(" loading done ! < -----------")
 
 ##################################################################
-
 #STEP1: calculate Mitochondrial average coverage without correction
 # input files (bam)
 bamFile <- list.files(bamDir,"\\.bam$") 
 bamID <- head(unlist(strsplit(tail(unlist(strsplit(bamFile, "/")),1),"[.]")),1)
 INPUTBAM<-paste(bamDir,bamFile,sep="/")
-bamcoverage(INPUTBAM)
-OutFile <- paste0(INPUTDir,"/",bamID,"_","avgCov",".txt")
-write.table(bamcoverage(INPUTBAM),OutFile,sep="\t",col.names=F)
+loop_samples(bins,INPUTBAM,bin_size,bamID)
 avecovFile<-list.files(INPUTDir,"*avgCov.txt$")
 INPUTcov<-paste(INPUTDir,avecovFile,sep="/")
 MTcov<-MTcovcal(INPUTcov)
-
 #STEP2: investigate segmental aneuploidy
 #library(QDNAseq)
 #library(CGHbase)
@@ -64,6 +72,90 @@ bamcoverage <- function (bamfile) {
 	  ## returns a coverage for each reference sequence (aka. chromosome) in the bam file
 	  return (mean(coverage(ranges)))      
 }  
+#loog_samples is to run copy number analysis genome-wide 
+loop_samples <- function(bins,InputFile,BIN_S,bamID) {
+
+print(paste0("============= InputFile:", InputFile))
+	OutFile <- paste0(OutDir,"/",bamID,"_","avgCov",".txt")
+	write.table(bamcoverage(InputFile),OutFile,sep="\t",col.names=F)
+print(paste0("============= binReadCounts"))
+	readCounts <- binReadCounts(bins, bamfiles=InputFile)
+	#write.table(readCounts,"~/tmp1.csv",sep="\t",col.names=F)
+print(paste0("============= applyFilters"))
+	readCounts <- applyFilters(readCounts,residual=TRUE, blacklist=TRUE)
+	#write.table(readCounts,"~/tmp2.csv",sep="\t",col.names=F)
+print(paste0("============= estimateCorrection"))
+	readCounts <- estimateCorrection(readCounts)
+	#write.table(readCounts,"~/tmp3.csv",sep="\t",col.names=F)
+
+print(paste0("============= plot noise"))
+	OutFile <- paste0(OutDir,"/",bamID,"_","noisePlot",BIN_S,".pdf")
+	pdf(OutFile)
+	noisePlot(readCounts)
+	dev.off()
+print(paste0("============= applyFilters correctBins normaizeBins smoothOutlierBins"))
+	readCounts <- applyFilters(readCounts,residual=TRUE, blacklist=TRUE, chromosomes=NA)	# includes both X & Y
+	copyNumbers <- correctBins(readCounts)
+	copyNumbersNormalized <- normalizeBins(copyNumbers)
+	copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+print(paste0("============= segmentBins & normalizeSegmentedBins"))
+	copyNumbersSegmented <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+	copyNumbersSegmented <- normalizeSegmentedBins(copyNumbersSegmented)
+
+print(paste0("============= exportBins"))
+     	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,"_seg.bed")
+     	exportBins(copyNumbersSegmented,file = OutFile, format="bed", filter=F,type=c("segments"))
+
+print(paste0("============= output copyNumbersSegmented into rds file"))
+    	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,"before.rds")
+	saveRDS(copyNumbersSegmented, file=OutFile)
+##copyNumbersSegmented <- readRDS("")
+
+
+print(paste0("============= plot genome-wide ============="))
+	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,".pdf")
+	print(OutFile)
+	pdf(OutFile,paper='a4r')
+	#pdf(OutFile)
+	plot(copyNumbersSegmented, plot.type="w",main=paste0("bin=",BIN_S))	# paste0(unlist(strsplit(bamID, "-"))[2],",bin=",BIN_S))
+	dev.off()
+
+
+print(paste0("============= plot per_chr ============="))
+	f.data <- as(featureData(copyNumbersSegmented), "data.frame")
+	OutFile <- paste0(OutDir,"/",bamID,"_","byChr",BIN_S,".pdf")
+	pdf(OutFile)
+#	for (chromosome in c(1:22,"X","Y")){
+	for (chromosome in unique(f.data$chromosome)) {
+		select <- which(f.data$chromosome == chromosome)
+		print(paste("Plotting chromosome:", chromosome, sep = " "))
+		## Looping over samples, make a plot per sample, per chromosome
+		for (c in 1:ncol(copyNumbersSegmented)){
+			sample.name <- sampleNames(phenoData(copyNumbersSegmented))[c] # You can use this, for plot title or plot name
+			sample.name <- bamID
+			plot(copyNumbersSegmented[select, c], ylim=c(-2,2),main=paste0("Chr",chromosome,",bin=",BIN_S))         
+		}
+	}
+	dev.off()
+
+   
+print(paste0("============= set cutoff & plot ============="))
+	copyNumbersCalled <- try(callBins(copyNumbersSegmented),silent=T)
+	if (inherits(copyNumbersCalled,'try-error')) {
+		copyNumbersCalled <- try(callBins(copyNumbersSegmented,method="cutoff",cutoffs=c(-0.1, 0.1)),silent=T)
+	}  	
+
+	cgh <- makeCgh(copyNumbersCalled) 
+	regions <- CGHregions(cgh)
+	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,"_after_regions.bed")
+	exportBins(regions,file = OutFile, format="bed", filter=T,type=c("calls"))
+
+	OutFile <- paste0(OutDir,"/",bamID,"_","Calls",BIN_S,".pdf")
+	pdf(OutFile)
+	plot(copyNumbersCalled)
+	dev.off()
+
+}
 ##MTcalculate is to calculate MTcoverage compared to autosomecoverage, input is avecov.txt caculate from bamcoverage()
 #output is a single numeric vector
 MTcovcal<-function(object){
@@ -149,5 +241,6 @@ correctionfactor<-function (object,method=c("log2ratio","probability"),cutoff=lo
  REF<-6072607692 
   F<-(REF-losslength+gainlength)/REF #QDNAseq automatically detected Y chromosome as one copy loss.
 }
+
 
 print("-------------define function done")
