@@ -1,4 +1,4 @@
-# Mitomany
+# Mitocopy
 Mitochondrial DNA content estimation from single cell sequencing
 
 Low coverage whole genome sequencing has been developed in preimplantation genetic screening (PGS) for chromosome copy number variation analysis. This project is to estimate mitochondrial DNA content from single cell sequencing data.
