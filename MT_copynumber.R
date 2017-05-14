@@ -25,17 +25,17 @@ bamFile <- list.files(bamDir,"\\.bam$")
 bamID <- head(unlist(strsplit(tail(unlist(strsplit(bamFile, "/")),1),"[.]")),1)
 INPUTBAM<-paste(bamDir,bamFile,sep="/")
 loop_samples(bins,INPUTBAM,bin_size,bamID)
-avecovFile<-list.files(INPUTDir,"*avgCov.txt$")
-INPUTcov<-paste(INPUTDir,avecovFile,sep="/")
+avecovFile<-list.files(OutDir,"*avgCov.txt$")
+INPUTcov<-paste(OutDir,avecovFile,sep="/")
 MTcov<-MTcovcal(INPUTcov)
 #STEP2: investigate segmental aneuploidy
 #library(QDNAseq)
 #library(CGHbase)
 #input files (copynumbersegmentedfiles)
 
-copynumbersegFile <- list.files(INPUTDir,"\\.rds$")
+copynumbersegFile <- list.files(OutDir,"\\.rds$")
 segID <- head(unlist(strsplit(tail(unlist(strsplit(copynumberseg, "/")),1),"[.]")),1)
-INPUTcopynumberseg<-paste(INPUTDir,copynumberseg,sep="/")
+INPUTcopynumberseg<-paste(OutDir,copynumberseg,sep="/")
 process(INPUTcopynumberseg)
 
 #sTEP3:calculate correctionfactor
@@ -143,8 +143,9 @@ print(paste0("============= set cutoff & plot ============="))
 	copyNumbersCalled <- try(callBins(copyNumbersSegmented),silent=T)
 	if (inherits(copyNumbersCalled,'try-error')) {
 		copyNumbersCalled <- try(callBins(copyNumbersSegmented,method="cutoff",cutoffs=c(-0.1, 0.1)),silent=T)
-	}  	
-
+	}  
+	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,"copyNumbersCalled.rds")
+        saveRDS(copyNumbersCalled, file=OutFile)
 	cgh <- makeCgh(copyNumbersCalled) 
 	regions <- CGHregions(cgh)
 	OutFile <- paste0(OutDir,"/",bamID,"_",BIN_S,"_after_regions.bed")
